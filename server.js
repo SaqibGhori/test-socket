@@ -1,67 +1,56 @@
-// Node.js + Express + Socket.IO hybrid server
-const express = require("express");
+// Raw WebSocket server (without Socket.IO)
 const http = require("http");
-const { Server } = require("socket.io");
+const WebSocket = require("ws");
+const express = require("express");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*" }
-});
+const wss = new WebSocket.Server({ server });
 
-// ✅ Support JSON + URL-encoded forms
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Root test
+// ✅ Root test
 app.get("/", (req, res) => {
-  res.send("📡 Hybrid Reading Server is live!");
+  res.send("📡 Raw WebSocket + HTTP server is live!");
 });
 
-// ✅ Socket.IO connections
-io.on("connection", (socket) => {
-  console.log("✅ User connected:", socket.id);
+// ✅ Raw WebSocket connections
+wss.on("connection", (ws, req) => {
+  const clientIP = req.socket.remoteAddress;
+  console.log("✅ WebSocket client connected:", clientIP);
 
-  // Optional device register event
-  socket.on("register", (data) => {
-    console.log(`📡 Device registered: ${data.deviceId} (socket: ${socket.id})`);
-    socket.deviceId = data.deviceId;
+  ws.on("message", (message) => {
+    console.log("📡 Reading (WebSocket):", message.toString());
+
+    // Broadcast to all connected clients
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message.toString());
+      }
+    });
   });
 
-  // Normal chat-style messages
-  socket.on("message", (msg) => {
-    console.log("💬 Message:", msg);
-    io.emit("message", msg);
-  });
-
-  // Readings via Socket.IO
-  socket.on("reading", (data) => {
-    const deviceId = data.deviceId || socket.deviceId || "unknown-device";
-    console.log(`📡 Reading (Socket) from ${deviceId}:`, data);
-
-    // broadcast to all clients
-    io.emit("reading", data);
-  });
-
-  socket.on("disconnect", () => {
-    console.log(`❌ User disconnected: ${socket.deviceId || socket.id}`);
+  ws.on("close", () => {
+    console.log("❌ WebSocket client disconnected:", clientIP);
   });
 });
 
-// ✅ HTTP POST endpoint
+// ✅ HTTP endpoint (optional, same as before)
+app.use(express.json());
 app.post("/send-reading", (req, res) => {
-  const deviceId = req.query.deviceId || req.body.deviceId || "unknown-device";
   const reading = req.body;
+  console.log("📡 Reading (HTTP):", reading);
 
-  console.log(`📡 Reading (HTTP) from ${deviceId}:`, reading);
+  // Broadcast HTTP readings to WebSocket clients
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(reading));
+    }
+  });
 
-  // broadcast to connected socket clients as well
-  io.emit("reading", { deviceId, ...reading });
-
-  res.status(200).send({ success: true, msg: "Reading received & broadcasted" });
+  res.status(200).send({ success: true, msg: "Reading received" });
 });
 
+// ✅ Start server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`🚀 Hybrid Server running at http://localhost:${PORT}`);
+  console.log(`🚀 Raw WebSocket server running on port ${PORT}`);
 });
